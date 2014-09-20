@@ -1,0 +1,73 @@
+** DRIVETIME POINT TO SEGMENT AGGREGATION SCRIPT
+** This script is akin to a max raster filter, where the segments operate like a raster filter area of many cells, computing statistics about the values within that filter, but here in a vector environment.
+** The script will be run for each of the different sub-files for each acquisition year and carrier (there are 40 total files). For each year and carrier, there are several sub-files that correspond to general link technologies (e.g. GSM, HSPA, LTE).
+** The objective of this script is to output a table with a record for each segment containing best connection values (signal strength, upload speed, download speed) for each of the link technologies present.
+** The term “link technology” is used loosely… Isotrope made a different file for the general classes of link technology for each acquisition year and carrier… also, there is a nominative link technology field in each file that is a finer detail indicator of the specific technology (e.g. GPRS or EDGE for 2G GSM, or type of CDMA hardware) employed during the connection measured.
+** Definitions of variables: signal strength is a negative number with the smaller absolute value being the best signal strength, i.e. -57 is better signal than -110; there is only one “data transfer speed” field in the import files with higher numbers representing faster data transfer; whether the data transfer was an uplink or downlink is recorded in the “direction” field as an “U” or “D”; the “linktech” field is different depending upon the carrier and file – I will adjust this script for each file and modify the hierarchy of this “nominative” data
+
+## Import segment file containing polylines of segments and intersections for Utah roads
+import segment file;
+
+## Import drivetime files
+** Each “link technology” set of files for each acquisition year and carrier has both a radio link file (with connection information such as signal strength) and a data link file (with data transfer information such as upload and download file speeds).
+import radio link point file;  ## fields: lat, long, signal
+import data link point file; ## fields: lat, long, linktech, direction [U for upload, D for download], speed
+
+## Create export table and fields (could be a csv export)
+create export table;
+create “segmentID” field, int type, represents the segment and to be used as key to link all files later on
+create “signal” field, int type, equals signal strength, always negative number between ~ -30 and -120
+create “uplink” field, int type, equals max upload transfer speed
+create “downlink” field, int type, equals max download transfer speed
+
+## Create temp variables
+create “signal” variable, int type, initialize to null (preferred), or -200
+create “uplink” variable, int type, initialize to null (preferred), or -200
+create “downlink” variable, int type, initialize to null (preferred), or -200
+
+for each segment in segment file:
+     set buffer at 0.11 miles (5 sec @ 80 mph);
+     write to export file;     
+     write segmentID from segment file to “segmentID” field in export table;
+     initialize “signal,” “uplink,” and “downlink” fields in export field to null (preferred) or -200
+
+     conduct spatial query for all points in RADIO LINK file within the buffer
+     ** There may be segments where a carrier did not provide service, so there may be no points, thus the if / else conditional below.
+     if: no points then continue, else:
+     for each point in buffer:
+          ** Must be able to handle null or 0 values in the imported point files
+          temp variable “signal” = “signal” value from point if < temp signal var
+
+     ## iteration through all points is complete, set the values in the export file to the temp variables
+     export signal = temp var signal;
+
+     conduct spatial query for all points in DATA LINK file within the buffer
+     ** There may be segments where a carrier did not provide service, so there may be no points, thus the if / else conditional below.
+     if: no points then continue, else:
+     for each point in buffer:
+         ** Because uplink and downlink speeds are contained in the same field, whether the point record refers to upload or download is indicated by the “direction” field in the point files
+          ** Must be able to handle null or 0 values in the imported point files
+          temp variable “uplink” = “uplink” value from point if direction = “U” and speed > temp uplink var
+          temp variable “downlink” = “downlink” value from point if direction = “U” and speed > temp downlink var
+
+     export var uplink = temp var uplink;
+     export var downlink = temp var downlink;
+
+     (for loop advances to next segment)
+
+final write export table, close files;
+
+
+** REFERENCE ONLY: List of files
+
+Years: 2011, 2013
+GSM providers: ATT, TMO have radio link files GSM, UMTS, LTE* (*2013 only)
+CDMA providers: SPR, VZW have radio link files CDMA, EVDO
+  GSM & GPRS/EDGE, UMTS x 2, HSPA, LTE x 2
+CDMA providers: SPR, VZW:  CDMA-EVDO & CDMA & EVDO, LTE x 2
+
+TMO & ATT: 1,1,1,1,1 = 5 2011  = 10 
+TMO & ATT: 1,1,1,1,1,1,1 = 7 2013  = 14
+SPR: 1,1,1 = 3 2011 x 2  = 6
+VZW: 1,1,1,1,1 = 5 2011, 2013 = 10
+
