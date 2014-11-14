@@ -17,6 +17,14 @@ class Fields (object):
         return self._fieldList
 
 
+class RoadFields(Fields):
+    def __init__(self, roads, segmentId):
+        self.objectId = arcpy.Describe(roads).OIDFieldName
+        self.roadSegmentId = segmentId
+        
+        self._fieldList = [self.objectId, self.roadSegmentId]
+
+
 class DataPointFields(Fields):
     
     def __init__(self, dataPoints, directionFieldName, speedFieldName):        
@@ -44,8 +52,8 @@ class NearTableFields(Fields):
 
 class DataStatsFields(Fields):
     
-    def __init__(self, dataFields, nearFields):
-        self.segmentId = nearFields.nearId 
+    def __init__(self, dataFields, roadFields):
+        self.segmentId = roadFields.roadSegmentId
         self.maxSpeed = 'MAX_{}'.format(dataFields.speed)
         self.direction = dataFields.direction
         
@@ -53,8 +61,8 @@ class DataStatsFields(Fields):
 
 class SignalStatsFields(Fields):
     
-    def __init__(self, signalFields, nearFields):
-        self.segmentId = nearFields.nearId 
+    def __init__(self, signalFields, roadFields):
+        self.segmentId = roadFields.roadSegmentId
         self.maxSignal= 'MAX_{}'.format(signalFields.signal)
         
         self._fieldList = [self.segmentId, self.maxSignal]       
@@ -102,16 +110,17 @@ if __name__ == '__main__':
 ### Set variables in this section
 
     #Path to gdb that contains points and segment lines
-    gdbPath = r'C:\Users\kwalker\Documents\Aptana Studio 3 Workspace\BroadbandDriveTestStats\data\TestData.gdb'
+    gdbPath = r'C:\Users\Administrator\My Documents\Aptana Studio 3 Workspace\BroadbandDriveTestStats\data\testdata10_2.gdb'
     #Segment line layer
-    roads = '{}'.format(os.path.join(gdbPath, 'MultipleRoadSegments'))#Change the segmentlayer name here    
+    roads = '{}'.format(os.path.join(gdbPath, 'MultipleRoadSegments'))#Change the segmentlayer name here
+    roadFields = RoadFields(roads, "CustomId") #Change the road Id field here.   
     #Point layer names and field names
-    dataPoints = '{}'.format(os.path.join(gdbPath,'DataPointFeatures'))#Change the data point layer name here
+    dataPoints = '{}'.format(os.path.join(gdbPath,'TestPointsForMultiRoad'))#Change the data point layer name here
     dataFields = DataPointFields (dataPoints, 'direction', 'speed')#Change direction and speed field names here
-    signalPoints = '{}'.format(os.path.join(gdbPath,'SignalPointFeatures'))#Change the signal point layer name here
+    signalPoints = '{}'.format(os.path.join(gdbPath,'Test_Signal_PointsForMultiRoad'))#Change the signal point layer name here
     signalFields = signalPointFields (signalPoints, 'signal')#Change signal field name here
     #Ouput Csv file path. This csv will be created by the program.
-    outputCsvPath =r'C:\Users\kwalker\Documents\Aptana Studio 3 Workspace\BroadbandDriveTestStats\data\OutTest2.csv'
+    outputCsvPath =r'C:\Users\Administrator\My Documents\Aptana Studio 3 Workspace\BroadbandDriveTestStats\data\OutCsvTest.csv'
     SegmentResult.outputCsvFields = ["segmentID", "signal", "uplink", "downlink"]#Number of CSV fields should match class fields in SegmentResult
     #Distance that determines is points belong to a segment
     bufferRadius = '0.11 Miles'#Unit text is required by GenerateNearTable_analysis
@@ -122,12 +131,12 @@ if __name__ == '__main__':
     dataNearTable = '{}'.format(os.path.join(tempGdb,'DataNear'))
     nearFields = NearTableFields()
     dataStats = '{}'.format(os.path.join(tempGdb, 'dataStats'))
-    dStatsFields = DataStatsFields(dataFields, nearFields)
+    dStatsFields = DataStatsFields(dataFields, roadFields)
     
     signalNearTable = '{}'.format(os.path.join(tempGdb,'SignalNear'))
     nearFields = NearTableFields()
     signalStats = '{}'.format(os.path.join(tempGdb, 'signalStats'))
-    sStatsFields = SignalStatsFields(signalFields, nearFields)
+    sStatsFields = SignalStatsFields(signalFields, roadFields)
     
     results = {}
     
@@ -136,10 +145,14 @@ if __name__ == '__main__':
     print "Begin data points near and stats analysis"
     arcpy.GenerateNearTable_analysis (dataPoints, roads, dataNearTable, 
                                       search_radius = bufferRadius, closest = 'ALL', method = 'GEODESIC')
+    #Join point fields to near table.
     arcpy.JoinField_management (dataNearTable, nearFields.inputId, dataPoints, 
                                 dataFields.objectId, [dataFields.speed, dataFields.direction])
+    #Join road fields to near table
+    arcpy.JoinField_management (dataNearTable, nearFields.nearId, roads, 
+                                roadFields.objectId, [roadFields.roadSegmentId])
     arcpy.Statistics_analysis (dataNearTable, dataStats, 
-                               [[dataFields.speed, 'MAX']], [dataFields.direction, nearFields.nearId])
+                               [[dataFields.speed, 'MAX']], [dataFields.direction, roadFields.roadSegmentId])
     
     #Create result objects from stats table
     with arcpy.da.SearchCursor(dataStats, dStatsFields.getFieldList()) as dataCursor:
@@ -165,8 +178,10 @@ if __name__ == '__main__':
                                       search_radius = bufferRadius, closest = 'ALL', method = 'GEODESIC')
     arcpy.JoinField_management (signalNearTable, nearFields.inputId, signalPoints, 
                                 signalFields.objectId, [signalFields.signal])
+    arcpy.JoinField_management (signalNearTable, nearFields.nearId, roads, 
+                                roadFields.objectId, [roadFields.roadSegmentId])
     arcpy.Statistics_analysis (signalNearTable, signalStats, 
-                               [[signalFields.signal, 'MAX']], [nearFields.nearId])
+                               [[signalFields.signal, 'MAX']], [roadFields.roadSegmentId])
     
     #Create result objects from stats table
     with arcpy.da.SearchCursor(signalStats, sStatsFields.getFieldList()) as signalCursor:
@@ -181,5 +196,7 @@ if __name__ == '__main__':
             segResult.signal = maxSignal
 
 ### Write results to a CSV file
+    print "Output CSV created"
     SegmentResult.createResultCSV(results.values(), outputCsvPath) 
     arcpy.Delete_management(tempGdb)
+    print "Completed"
